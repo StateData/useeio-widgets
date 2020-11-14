@@ -219,5 +219,3 @@ export class IOGrid extends Widget {
             : this.directImpacts.getRow(indicator.index);
     }
 }
-
-
