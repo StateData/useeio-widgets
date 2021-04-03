@@ -1,5 +1,7 @@
 import { DemandType, ResultPerspective, Model } from "./webapi";
 import * as strings from "./util/strings";
+import { utcMilliseconds } from "d3";
+import { isNone } from "./util/util";
 
 /**
  * A common configuration object of our widgets. Often our widgets take
@@ -154,7 +156,7 @@ export abstract class Widget {
         }
     }
 
-    protected abstract async handleUpdate(_: Config): Promise<void>;
+    protected abstract handleUpdate(_: Config): Promise<void>;
 
     /**
      * If this widget is associated with a scope, this function creates a new
@@ -243,6 +245,7 @@ export class UrlConfigTransmitter implements ConfigTransmitter {
         this.config = this.parseUrlConfig({ withScripts: true });
         window.onhashchange = () => this.onHashChanged();
         window.addEventListener("popstate", () => this.onHashChanged());
+        document.addEventListener("hashChangeEvent", () => this.onHashChanged());
     }
 
     /**
@@ -408,7 +411,67 @@ export class UrlConfigTransmitter implements ConfigTransmitter {
             return parts.join("&");
         };
 
-        window.location.hash = "#" + str(this.config);
+        this.patchHash(str(this.config));
+    }
+
+    /**
+     * Update the current hash with the given value but keep current hash
+     * attributes that are no configuration attributes in the hash. Note that
+     * configuration attributes can be dropped intentionally from the hash part
+     * (indicating that something is not set). Also, configuration attributes
+     * can have scope prefixes. Thus, it is not enough to just keep the current
+     * attributes in the has; we need to check for each current attribute if it
+     * is a configuration attribute instead.
+     */
+    private patchHash(configHash: string) {
+        const current = window.location.hash;
+        if (strings.isNullOrEmpty(current) || current === "#") {
+            window.location.hash = "#" + configHash;
+            return;
+        }
+        const configKeys = [
+            "model",
+            "sectors",
+            "naics",
+            "indicators",
+            "perspective",
+            "analysis",
+            "year",
+            "location",
+            "count",
+            "page",
+            "view",
+            "showvalues",
+            "showscientific",
+            "selectmatrix",
+            "showdownload",
+            "showcode",
+        ];
+
+        let prefix = "";
+        const currentParts = current.substring(1).split("&");
+        for (const part of currentParts) {
+            const [key,] = part.split("=");
+            let addIt = true;
+            for (const configKey of configKeys) {
+                if (key === configKey
+                    || key.endsWith(`-${configKey}`)) {
+                    addIt = false;
+                    break;
+                }
+            }
+            if (!addIt) {
+                continue;
+            }
+            if (prefix.length > 0) {
+                prefix += "&";
+            }
+            prefix += part;
+        }
+
+        window.location.hash = strings.isNullOrEmpty(prefix)
+            ? `#${configHash}`
+            : `#${prefix}&${configHash}`;
     }
 
     /**
@@ -432,6 +495,13 @@ export class UrlConfigTransmitter implements ConfigTransmitter {
                 }
             }
         }
+
+        // check for a global `hiddenhash` variable
+        const hiddenhash = this.getHiddenHash();
+        if (hiddenhash !== "") {
+            urls.push("#" + hiddenhash);
+        }
+
         for (const url of urls) {
             const hashParams = this.getParameters(this.getHashPart(url));
             const otherParams = this.getParameters(this.getParameterPart(url));
@@ -439,6 +509,26 @@ export class UrlConfigTransmitter implements ConfigTransmitter {
             this.updateConfig(config, otherParams);
         }
         return config;
+    }
+
+    /**
+     * We check for a global `hiddenhash` attribute for additional configuration
+     * settings. This can be a string or an object with string values.
+     */
+    private getHiddenHash(): string {
+        const hiddenhash = (window as any).hiddenhash;
+        if (isNone(hiddenhash)) {
+            return "";
+        }
+        if (typeof hiddenhash === "string") {
+            return hiddenhash;
+        }
+        if (typeof hiddenhash === "object") {
+            return Object.keys(hiddenhash)
+                .map(key => `${key}=${hiddenhash[key]}`)
+                .join("&");
+        }
+        return "";
     }
 
     /**
